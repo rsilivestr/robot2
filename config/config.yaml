@@ -1,0 +1,56 @@
+common:
+  # источник сообщений
+  # 0: нет
+  # 1: лидар
+  # 2: ROS или ROS2
+  # 3: файл pcap
+  msg_source: 1
+  # Send packets through ROS or ROS2 (used to record packet)
+  send_packet_ros: false
+  # Send point cloud through ROS or ROS2
+  send_point_cloud_ros: true
+lidar:
+  - driver:
+      lidar_type: RSHELIOS
+      # порт для получения облака точек.
+      msop_port: 6699
+      # порт для получения данных о лидаре: калибровочные параметры и т.п.
+      difop_port: 7788
+      # порт IMU
+      imu_port: 0
+      # Bytes of user layer. there is no user layer if it is 0
+      user_layer_bytes: 0
+      # Bytes of tail layer. there is no tail layer if it is 0
+      tail_layer_bytes: 0
+
+      # фильтр точек облака по расстоянию
+      min_distance: 0.2
+      max_distance: 200
+      # фильтр точек облака по углу
+      start_angle: 0
+      end_angle: 360
+
+      # true: Use the lidar clock as the message timestamp
+      # false: Use the system clock as the timestamp
+      use_lidar_clock: true
+      # true: discard NAN points
+      # false: reserve NAN points
+      dense_points: false          
+      # true: time-stamp point cloud with the first point
+      # false: with the last point
+      ts_first_point: true         
+
+      # параметры чтения из pcap файла
+      pcap_repeat: true
+      pcap_rate: 1.0
+      pcap_path: /home/robosense/lidar.pcap
+
+    ros:
+      # Frame id of packet message and point cloud message
+      ros_frame_id: rslidar
+      ros_recv_packet_topic: /rslidar_packets
+      ros_send_packet_topic: /rslidar_packets
+      ros_send_imu_data_topic: /rslidar_imu_data
+      ros_send_point_cloud_topic: /rslidar_points
+      # Topic QoS history depth
+      ros_queue_length: 100
