@@ -1,56 +1,70 @@
 common:
-  # источник сообщений
-  # 0: нет
-  # 1: лидар
-  # 2: ROS или ROS2
-  # 3: файл pcap
+  # Источник сообщений:
+  # 0 - нет;
+  # 1 - лидар;
+  # 2 - ROS или ROS2;
+  # 3 - файл pcap.
   msg_source: 1
-  # Send packets through ROS or ROS2 (used to record packet)
-  send_packet_ros: false
-  # Send point cloud through ROS or ROS2
+  # Публиковать сырые пакеты лидара в ROS/ROS2 (топик ros_send_packet_topic).
+  # Нужно для записи rosbag с пакетами, которые потом декодируются при msg_source: 2.
+  send_packet_ros: true
+  # true: публиковать облако точек в ROS/ROS2 (топик ros_send_point_cloud_topic).
+  # Тип сообщения стандартный — sensor_msgs/PointCloud2, отображается в RViz2 напрямую.
+  # Записывать облако в rosbag не рекомендуется из-за большого объёма; лучше записывать пакеты.
   send_point_cloud_ros: true
 lidar:
   - driver:
       lidar_type: RSHELIOS
-      # порт для получения облака точек.
+      # UDP-порт MSOP-пакетов: данные измерений, из которых строится облако точек.
+      # Если данные не приходят, сначала проверьте порты (должны совпадать с настройками лидара).
       msop_port: 6699
-      # порт для получения данных о лидаре: калибровочные параметры и т.п.
+      # UDP-порт DIFOP-пакетов: служебные данные лидара (калибровочные углы, настройки,
+      # время и т.п.). Без них драйвер по умолчанию не выдаёт облако точек.
       difop_port: 7788
-      # порт IMU
+      # UDP-порт данных IMU. 0 — IMU не используется.
       imu_port: 0
-      # Bytes of user layer. there is no user layer if it is 0
+      # Размер (в байтах) пользовательского слоя в пакете.
       user_layer_bytes: 0
-      # Bytes of tail layer. there is no tail layer if it is 0
+      # Размер (в байтах) хвостового слоя в пакете.
       tail_layer_bytes: 0
 
-      # фильтр точек облака по расстоянию
+      # Фильтр точек облака по расстоянию в метрах.
       min_distance: 0.2
       max_distance: 200
-      # фильтр точек облака по углу
+      # Фильтр точек облака по горизонтальному углу в градусах 0..360.
       start_angle: 0
       end_angle: 360
 
-      # true: Use the lidar clock as the message timestamp
-      # false: Use the system clock as the timestamp
-      use_lidar_clock: true
-      # true: discard NAN points
-      # false: reserve NAN points
-      dense_points: false          
-      # true: time-stamp point cloud with the first point
-      # false: with the last point
-      ts_first_point: true         
+      # Источник метки времени сообщений:
+      # true: часы лидара (время из пакетов лидара)
+      # false: системные часы компьютера, на котором работает драйвер
+      use_lidar_clock: false
+      # Обработка недействительных точек (NaN, например нет отражения):
+      # true: удалять из облака (облако неупорядоченное, height = 1)
+      # false: сохранять (облако упорядоченное по лучам и направлениям)
+      dense_points: false
+      # Какой точкой определяется метка времени облака (для механических лидаров):
+      # true: первой точкой кадра
+      # false: последней точкой кадра
+      ts_first_point: true
 
-      # параметры чтения из pcap файла
+      # Параметры чтения из pcap файла.
       pcap_repeat: true
       pcap_rate: 1.0
       pcap_path: /home/robosense/lidar.pcap
 
     ros:
-      # Frame id of packet message and point cloud message
+      # Идентификатор системы координат (frame_id) в сообщениях облака точек и пакетов.
+      # В RViz2 указать его в Fixed Frame.
       ros_frame_id: rslidar
+      # Топик, из которого читаются пакеты лидара при msg_source: 2.
       ros_recv_packet_topic: /rslidar_packets
+      # Топик, в который публикуются пакеты лидара при send_packet_ros: true.
       ros_send_packet_topic: /rslidar_packets
+      # Топик данных IMU (только для лидаров с IMU, см. imu_port).
       ros_send_imu_data_topic: /rslidar_imu_data
+      # Топик облака точек (sensor_msgs/PointCloud2).
       ros_send_point_cloud_topic: /rslidar_points
-      # Topic QoS history depth
+      # Глубина очереди публикации (QoS history depth): сколько сообщений хранится,
+      # если подписчик не успевает их забирать.
       ros_queue_length: 100

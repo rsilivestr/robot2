@@ -3,16 +3,32 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # Сеть хоста: лидар шлёт UDP-пакеты на порты хоста (6699/7788),
+    # а DDS (ROS2) должен быть виден машине "client" в локальной сети.
     network_mode: host
+    # Запуск драйвера лидара: читает пакеты лидара и публикует облако точек
+    # в топик /rslidar_points (см. config/config.yaml).
     command: |
       /bin/bash -c "
         source /ros_entrypoint.sh &&
-        source /rslidar_ws/install/setup.bash"
-    # TODO
+        source /rslidar_ws/install/setup.bash &&
+        ros2 run rslidar_sdk rslidar_sdk_node"
     environment:
+      # Номер домена ROS2: должен совпадать на "server" и "client".
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      # Реализация DDS. По умолчанию Fast DDS; для Cyclone DDS перед запуском
+      # выполнить export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp (см. README).
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      # Только UDP для Fast DDS. Контейнер и хост используют общую сеть, но разную
+      # разделяемую память (/dev/shm). Без этой настройки Fast DDS выбирает
+      # разделяемую память для узлов на том же хосте, и данные не доходят до ROS2 хоста.
+      - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
       # Настройки для графического интерфейса (Rviz2)
       - DISPLAY=${DISPLAY}
       - QT_X11_NO_MITSHM=1
     volumes:
+      # Конфигурация драйвера: изменения применяются после
+      # docker compose restart lidar, без пересборки образа.
+      - ./config/config.yaml:/rslidar_ws/src/rslidar_sdk/config/config.yaml:ro
       # UNIX socket (файл) для подключения графического интерфейса
       - /tmp/.X11-unix:/tmp/.X11-unix
