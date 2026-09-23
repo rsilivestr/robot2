@@ -7,7 +7,7 @@ common:
   msg_source: 1
   # Публиковать сырые пакеты лидара в ROS/ROS2 (топик ros_send_packet_topic).
   # Нужно для записи rosbag с пакетами, которые потом декодируются при msg_source: 2.
-  send_packet_ros: true
+  send_packet_ros: false
   # true: публиковать облако точек в ROS/ROS2 (топик ros_send_point_cloud_topic).
   # Тип сообщения стандартный — sensor_msgs/PointCloud2, отображается в RViz2 напрямую.
   # Записывать облако в rosbag не рекомендуется из-за большого объёма; лучше записывать пакеты.
