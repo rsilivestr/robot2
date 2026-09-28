@@ -267,6 +267,113 @@ while reader.has_next():
     print(stamp_ns, xyz.shape)   # xyz: массив numpy формы (N, 3)
 ```
 
+## 5. Запись облака точек в PostgreSQL
+Каталог `lidar_db` этого репозитория содержит два узла ROS2 — скрипты Python, сборка не нужна:
+- `writer.py` — подписывается на `/rslidar_points` и сохраняет каждый кадр в таблицу `frames`;
+- `reader.py` — читает кадры из таблицы `frames` и публикует их в топик ROS2 для RViz2.
+
+Одна строка таблицы `frames` — один кадр: время кадра, `frame_id`, описание полей точек
+(`fields`, JSON) и массив точек `data` без изменений (`bytea`, как в `PointCloud2.data`).
+Отдельная строка на каждую точку не используется: это ~576 000 строк в секунду.
+
+Объём такой же, как у rosbag2 без сжатия: ~32 GB в час. Для уменьшения объёма сохраняйте
+каждый N-й кадр (параметр `every_n`, шаг 5.2).
+
+База данных и оба узла работают на "server". RViz2 работает на "client" и получает облако
+точек по ROS2, как в разделе 3.
+
+### 5.1 Установка PostgreSQL и создание базы данных на "server"
+```sh
+sudo apt install postgresql python3-psycopg2
+sudo -u postgres createuser $USER      # пользователь PostgreSQL с именем пользователя системы
+sudo -u postgres createdb -O $USER lidar
+psql lidar -c 'SELECT version();'
+```
+Ожидается: строка с версией PostgreSQL (в Ubuntu 24.04 — 16). Подключение идёт через
+локальный сокет без пароля, поэтому строка подключения узлов — `dbname=lidar`.
+
+### 5.2 Запись (writer.py)
+Драйвер запущен (шаг 1.4). Запись идёт, пока открыт терминал. По SSH запускайте её в tmux.
+```sh
+source /opt/ros/jazzy/setup.bash
+python3 ~/robot2/lidar_db/writer.py
+```
+При первом запуске узел создаёт таблицу `frames` и индекс по времени кадра.
+
+Ожидается в выводе:
+```
+saving every 1 frame(s) from /rslidar_points to database "lidar"
+received 100 frames, saved 100
+```
+Строка `received ... saved ...` выводится раз в 10 с. Если `received` растёт медленнее
+~100 за 10 с, база данных не успевает записывать кадры, и часть кадров теряется.
+
+Параметры (`--ros-args -p <имя>:=<значение>`):
+- `dsn` — строка подключения к PostgreSQL, по умолчанию `dbname=lidar`.
+  Пример для базы данных на другой машине: `"host=<IP> dbname=lidar user=<user> password=<пароль>"`;
+- `topic` — топик облака точек, по умолчанию `/rslidar_points`;
+- `every_n` — сохранять каждый N-й кадр, по умолчанию `1` (все кадры).
+
+Пример: сохранять 1 кадр в секунду:
+```sh
+python3 ~/robot2/lidar_db/writer.py --ros-args -p every_n:=10
+```
+
+Остановка записи: `Ctrl+C`.
+
+### 5.3 Проверка записи
+```sh
+psql lidar -c "SELECT count(*), min(stamp), max(stamp),
+               pg_size_pretty(pg_total_relation_size('frames')) FROM frames;"
+```
+Ожидается: число кадров, время первого и последнего кадра, размер таблицы.
+
+### 5.4 Воспроизведение в RViz2 (reader.py)
+На "server" остановите драйвер: `reader.py` публикует в тот же топик `/rslidar_points`,
+иначе в топик публикуют два источника. Другой топик задаётся параметром `topic`.
+
+На "server":
+```sh
+source /opt/ros/jazzy/setup.bash
+python3 ~/robot2/lidar_db/reader.py
+```
+Ожидается: `publishing <N> frames to /rslidar_points at 10.0 Hz`. После последнего кадра
+узел завершается.
+
+На "client" запустите RViz2, как в разделе 3:
+```sh
+source /opt/ros/jazzy/setup.bash
+rviz2 -d rslidar_sdk/rviz/rviz2.rviz
+```
+
+Параметры (`--ros-args -p <имя>:=<значение>`):
+- `dsn` — строка подключения к PostgreSQL, по умолчанию `dbname=lidar`;
+- `topic` — топик для публикации, по умолчанию `/rslidar_points`;
+- `rate` — частота публикации кадров в Hz, по умолчанию `10.0`. Значение — число
+  с точкой (`5.0`, не `5`), иначе узел завершается с ошибкой типа параметра;
+- `loop` — воспроизводить по кругу, по умолчанию `false`;
+- `start`, `end` — интервал времени кадров, по умолчанию все кадры. Формат — время
+  PostgreSQL, например `"2026-09-28 14:00:00"` (часовой пояс сервера PostgreSQL).
+
+Пример: кадры за 5 минут по кругу, в 2 раза медленнее:
+```sh
+python3 ~/robot2/lidar_db/reader.py --ros-args \
+  -p start:="2026-09-28 14:00:00" -p end:="2026-09-28 14:05:00" \
+  -p rate:=5.0 -p loop:=true
+```
+
+Время в заголовке кадра (`header.stamp`) — исходное время записи с точностью
+до микросекунды.
+
+### 5.5 Удаление старых кадров
+```sh
+psql lidar -c "DELETE FROM frames WHERE stamp < now() - interval '7 days';"
+psql lidar -c "VACUUM frames;"
+```
+`VACUUM` освобождает место для новых кадров, но не уменьшает файлы базы данных на диске.
+Вернуть место операционной системе: `VACUUM FULL frames;` (таблица блокируется на время
+выполнения).
+
 ## Необязательно: Cyclone DDS
 С Fast DDS частота кадров больших облаков точек может падать (см. документ SDK выше).
 Cyclone DDS часто решает проблему. Реализация DDS должна быть одинаковой на всех машинах.
