@@ -189,6 +189,84 @@ rviz2 -d rslidar_sdk/rviz/rviz2.rviz
 частоту ниже реальной; частоту удобнее смотреть в RViz2 (см.
 `rslidar_sdk/doc/howto/13_how_to_solve_ROS2_humble_frame_rate_drop.md`).
 
+## 4. Запись облака точек в rosbag2
+rosbag2 — встроенный в ROS2 механизм записи топиков в файлы. В Jazzy формат по умолчанию —
+MCAP. Запись сохраняет сообщения с исходными временными метками, её можно воспроизвести
+обратно в ROS2 (RViz2, другие узлы) или прочитать из Python.
+
+Записывайте на "server": данные не идут по сети, кадры не теряются.
+Драйвер запущен (шаг 1.4).
+
+Если команда `ros2 bag` отсутствует:
+```sh
+sudo apt install ros-jazzy-rosbag2 ros-jazzy-rosbag2-storage-mcap
+```
+
+### 4.1 Свободное место
+Без сжатия поток ~9 MB/s, это около 32 GB в час. Проверьте свободное место:
+```sh
+df -h ~
+```
+
+### 4.2 Запись
+Запись идёт, пока открыт терминал. По SSH запускайте её в tmux, как драйвер в шаге 1.4.
+```sh
+source /opt/ros/jazzy/setup.bash
+mkdir -p ~/bags
+ros2 bag record /rslidar_points \
+  -s mcap --storage-preset-profile zstd_fast \
+  -d 600 \
+  -o ~/bags/lidar_$(date +%F_%H-%M-%S)
+```
+Параметры:
+- `-s mcap` — формат хранения MCAP;
+- `--storage-preset-profile zstd_fast` — сжатие zstd внутри файла MCAP с малой нагрузкой на CPU;
+- `-d 600` — новый файл каждые 600 с. При аварийном завершении теряется только последний файл;
+- `-o` — каталог записи. Каталог не должен существовать, rosbag2 создаёт его сам.
+
+Ожидается в выводе: `Subscribed to topic '/rslidar_points'` и `Recording...`.
+
+Остановка записи: `Ctrl+C`. rosbag2 закрывает файлы и пишет `metadata.yaml`.
+
+### 4.3 Проверка записи
+```sh
+ros2 bag info ~/bags/lidar_<дата>
+```
+Ожидается: `Storage id: mcap`, топик `/rslidar_points` типа `sensor_msgs/msg/PointCloud2`,
+`Count` примерно равен длительности записи в секундах, умноженной на 10.
+
+### 4.4 Воспроизведение
+Скопируйте каталог записи на "client" (например, `scp -r` или `rsync -a`).
+Драйвер на "server" при воспроизведении остановите: иначе в топик `/rslidar_points`
+публикуют два источника.
+```sh
+source /opt/ros/jazzy/setup.bash
+ros2 bag play ~/bags/lidar_<дата>             # воспроизведение с исходной скоростью
+ros2 bag play ~/bags/lidar_<дата> --loop      # по кругу
+ros2 bag play ~/bags/lidar_<дата> --rate 0.5  # в 2 раза медленнее
+```
+Облако точек смотрите в RViz2, как в разделе 3.
+
+### 4.5 Чтение записи из Python
+Выполняйте после `source /opt/ros/jazzy/setup.bash`.
+```python
+import rosbag2_py
+from rclpy.serialization import deserialize_message
+from sensor_msgs.msg import PointCloud2
+from sensor_msgs_py import point_cloud2
+
+reader = rosbag2_py.SequentialReader()
+reader.open(
+    rosbag2_py.StorageOptions(uri='/home/<user>/bags/lidar_<дата>', storage_id='mcap'),
+    rosbag2_py.ConverterOptions(input_serialization_format='cdr', output_serialization_format='cdr'),
+)
+while reader.has_next():
+    topic, data, stamp_ns = reader.read_next()
+    msg = deserialize_message(data, PointCloud2)
+    xyz = point_cloud2.read_points_numpy(msg, field_names=('x', 'y', 'z'), skip_nans=True)
+    print(stamp_ns, xyz.shape)   # xyz: массив numpy формы (N, 3)
+```
+
 ## Необязательно: Cyclone DDS
 С Fast DDS частота кадров больших облаков точек может падать (см. документ SDK выше).
 Cyclone DDS часто решает проблему. Реализация DDS должна быть одинаковой на всех машинах.
